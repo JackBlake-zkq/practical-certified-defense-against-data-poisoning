@@ -5,6 +5,10 @@ import torchvision
 import torchvision.transforms as transforms
 import numpy
 import random
+import numpy as np
+import os
+from modules.GeneratorInterfaces import IModelGenerator, IDatasetGenerator
+
 
 class FiniteAggregationEnsembleTrainer:
     """
@@ -14,21 +18,27 @@ class FiniteAggregationEnsembleTrainer:
     - [FA Hashing](https://github.com/wangwenxiao/FiniteAggregation/blob/main/FiniteAggregation_data_norm_hash.py)  
     - [FA Training](https://github.com/wangwenxiao/FiniteAggregation/blob/main/FiniteAggregation_train_cifar_nin_baseline.py)
     """
-    def __init__(self, trainset:torch.utils.data.Dataset, testset:torch.utils.data.Dataset, model_repo:str, model:str, k:int=50, d:int=1, zero_seed:bool=False, output_dir="FA_ensemble"):
-        print(architecture)
+    def __init__(self, dataset_generator: IDatasetGenerator, model_generator: IModelGenerator, channels=3, k:int=50, d:int=1, zero_seed:bool=False, output_dir:str="FA_ensemble"):
         self.k = k
         self.d = d
         self.zero_seed = zero_seed
         self.n_subsets = self.k * self.d
-        self.architecture = architecture
-        self.trainset = trainset
-        self.testset = testset
+        self.model_generator = model_generator
+        self.dataset_generator = dataset_generator
         self.output_dir = output_dir
 
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-        imgs, labels = zip(*self.trainset)
+        print("Creating output dir...")
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        print("Getting data set...")
+        ds = dataset_generator.trainset()
+
+        print("Computing partitions...")
+        imgs, labels = zip(*ds)
         finalimgs = torch.stack(list(map((lambda x: torchvision.transforms.ToTensor()(x)), list(imgs))))
         for_sorting = (finalimgs*255).int()
         intmagessum = for_sorting.reshape(for_sorting.shape[0],-1).sum(dim=1) % self.n_subsets
@@ -53,7 +63,7 @@ class FiniteAggregationEnsembleTrainer:
         self.stds =  torch.stack(list([finalimgs[idxgroup[i]].permute(2,0,1,3,4).reshape(channels,-1).std(dim=1) for i in range(self.n_subsets) ]))
 
 
-    def train_base_models(self, start:int=0, range:int=250):
+    def train_base_models(self, start_index:int=0, num_to_train:int=250, epochs:int=200):
 
         device = (
             "cuda"
@@ -62,9 +72,10 @@ class FiniteAggregationEnsembleTrainer:
             if torch.backends.mps.is_available()
             else "cpu"
         )
+        print("using device:", device)
         start_epoch = 0  # start from epoch 0 or last checkpoint epoch
 
-        for part in range(start, start + range):
+        for part in range(start_index, start_index + num_to_train):
             seed = part
             if (self.zero_seed):
                 seed = 0
@@ -73,24 +84,24 @@ class FiniteAggregationEnsembleTrainer:
             torch.manual_seed(seed)
             torch.cuda.manual_seed_all(seed)
             curr_lr = 0.1
-            print('\Partition: %d' % part)
             part_indices = torch.tensor(self.partitions[part])
 
-            train_subset = torch.utils.data.Subset(self.trainset ,part_indices)
+            train_subset = torch.utils.data.Subset(self.dataset_generator.trainset(), part_indices)
             train_subset.dataset.transform = transforms.Compose([
                 transforms.ToTensor(),
                 transforms.Normalize(self.means[part], self.stds[part])
             ])
 
-            # transforms.Compose([
-            #     transforms.ToTensor(),
-            #     transforms.Normalize(self.means[part], self.stds[part])
-            # ])
+            testset = self.dataset_generator.testset()
+            testset.transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(self.means[part], self.stds[part])
+            ])
 
-            nomtestloader = torch.utils.data.DataLoader(self.testset, batch_size=128, shuffle=True, num_workers=1)
+            nomtestloader = torch.utils.data.DataLoader(testset, batch_size=128, shuffle=True, num_workers=1)
             trainloader = torch.utils.data.DataLoader(train_subset, batch_size=128, shuffle=True, num_workers=1)
             
-            net = self.architecture()
+            net = self.model_generator()
 
             net = net.to(device)
 
@@ -100,7 +111,7 @@ class FiniteAggregationEnsembleTrainer:
 
         # Training
             net.train()
-            for epoch in range(200):
+            for epoch in range(epochs):
                 for batch_idx, (inputs, targets) in enumerate(trainloader):
                     inputs, targets = inputs.to(device), targets.to(device)
                     optimizer.zero_grad()
@@ -115,14 +126,16 @@ class FiniteAggregationEnsembleTrainer:
 
             net.eval()
 
-            (inputs, targets)  = next(iter(nomtestloader)) #Just use one test batch
-            inputs, targets = inputs.to(device), targets.to(device)
-            with torch.no_grad():
-                outputs = net(inputs)
-                loss = criterion(outputs, targets)
-                _, predicted = outputs.max(1)
-                correct = predicted.eq(targets).sum().item()
-                total = targets.size(0)
+            correct = 0
+            total = 0
+            for (inputs, targets) in nomtestloader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                with torch.no_grad():
+                    outputs = net(inputs)
+                    loss = criterion(outputs, targets)
+                    _, predicted = outputs.max(1)
+                    correct += predicted.eq(targets).sum().item()
+                    total += targets.size(0)
             acc = 100.*correct/total
             print(f'Accuracy for base model {part}: {str(acc)}%')
             # Save checkpoint.
