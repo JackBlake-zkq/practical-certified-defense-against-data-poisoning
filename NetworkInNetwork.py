@@ -2,7 +2,6 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from modules.GeneratorInterfaces import IModelGenerator
 
 """
 Adapted from:
@@ -143,9 +142,3 @@ class NetworkInNetwork(nn.Module):
             elif isinstance(m, nn.Linear):
                 if m.bias.requires_grad:
                     m.bias.data.zero_()
-
-class NetworkInNetworkGenerator(IModelGenerator):
-    def __init__(self, opt):
-        self.opt = opt
-    def __call__(self):
-        return NetworkInNetwork(self.opt)
