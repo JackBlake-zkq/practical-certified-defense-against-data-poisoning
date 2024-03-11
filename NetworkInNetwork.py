@@ -4,7 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 """
-Adapted from:
+From:
 https://github.com/wangwenxiao/FiniteAggregation/blob/main/FeatureLearningRotNet/architectures/NetworkInNetwork.py
 """
 

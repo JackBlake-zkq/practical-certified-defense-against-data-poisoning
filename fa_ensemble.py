@@ -1,21 +1,10 @@
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torchvision
-import torchvision.transforms as transforms
-import numpy
 import random
 import numpy as np
 from torch.utils.data import Subset, Dataset
 from interfaces import TrainModelFunction
-from dataclasses import dataclass
 import os
-
-@dataclass
-class FAPartitionInfo:
-    idxs: list[int]
-    mean: float
-    std: float
+from torch.nn import Module
 
 class FiniteAggregationEnsemble:
     """
@@ -24,6 +13,9 @@ class FiniteAggregationEnsemble:
     Uses code from Wenxiao Wang's work on Finite Aggregation (FA):
     - [FA Hashing](https://github.com/wangwenxiao/FiniteAggregation/blob/main/FiniteAggregation_data_norm_hash.py)  
     - [FA Training](https://github.com/wangwenxiao/FiniteAggregation/blob/main/FiniteAggregation_train_cifar_nin_baseline.py)
+
+    Instantiating this class will immediatly compute the partitions of the dataset that each base model will be trained on,
+    and the mean and standard deviation of each partition.
     """
     def __init__(self, trainset: Dataset, train_function: TrainModelFunction, channels=3, k:int=50, d:int=1, base_model_dir:str='base_models'):
         self.k = k
@@ -67,6 +59,13 @@ class FiniteAggregationEnsemble:
 
 
     def train_base_model(self, partition_number: int):
+        """
+        Trains the base model for the specified partition number by calling the train_function
+        that the class was instantiated with. Saves the base model to base_model_dir with
+        file name model_{partition_number}.pth
+        """
+        print(self.means[partition_number],
+            self.stds[partition_number])
         if partition_number < 0 or partition_number >= self.k:
             raise ValueError("patition_number must be in the range [0, k)")
         net = self.train_function(
@@ -78,8 +77,22 @@ class FiniteAggregationEnsemble:
         print('Saving..')
         torch.save(net.state_dict(), f'{self.base_model_dir}/model_{str(partition_number)}.pth')
 
-    def eval(self):
+    def eval(self, testset: Dataset):
+        """
+        Evaluates accuracy of the ensemble on the provided testset. All base models must have
+        already been trained using train_base_model before calling this method.
+        """
         pass
 
     def certify(self):
+        """
+        Generates the roubstness cetificate for the ensemble.
+        """
+        pass
+
+    def distill(self, student: Module) -> Module:
+        """
+        Distills the ensemble into a single model.
+        Code adapted from [Konrad Zuchniak's work on Multi-teacher distillation](https://github.com/ZuchniakK/MTKD)
+        """
         pass
