@@ -8,5 +8,5 @@ class TrainModelFunction(abc.ABC):
     Represents a function that trains a model on a subset of the training set.
     """
     @abc.abstractmethod
-    def __call__(self, partition_number: int, train_subset: Subset, mean: Tensor, std: Tensor) -> Module:
+    def __call__(self, partition_number: int, train_subset: Subset, partition_mean: Tensor, partition_std: Tensor) -> Module:
         pass

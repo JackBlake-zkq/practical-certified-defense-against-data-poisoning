@@ -6,6 +6,27 @@ from interfaces import TrainModelFunction
 import os
 from torch.nn import Module
 
+# class SplitHash():
+#     def __init__(self, n_subsets:int):
+#         self.n_subsets = n_subsets
+#         self.shifts = random.sample(range(self.n_subsets), self.d)
+
+#     def __call__(self, feature: torch.Tensor) -> int:
+#         """Return the partition number for a given feature"""
+#         # split = SplitHash(k*d, ....)
+#         # split(torch.randn(5000)) -> 3
+#         pass
+
+# class SpreadHash():
+#     def __init__(self, n_subsets:int):
+#         self.n_subsets = n_subsets
+#         self.shifts = random.sample(range(self.n_subsets), self.d)
+
+#     def __call__(self, feature: torch.Tensor) -> int:
+#         """Return the unionized subset number for a given feature"""
+#         pass
+
+
 class FiniteAggregationEnsemble:
     """
     This class represents an ensemble of base models using the Finite Aggregation method.
@@ -34,6 +55,8 @@ class FiniteAggregationEnsemble:
 
         print("Computing partitions...")
         imgs, labels = zip(*trainset)
+        print(labels)
+
         finalimgs = torch.stack(imgs)
         for_sorting = (finalimgs*255).int()
         intmagessum = for_sorting.reshape(for_sorting.shape[0],-1).sum(dim=1) % self.n_subsets
