@@ -115,8 +115,9 @@ class FiniteAggregationEnsemble:
             #    'mean': self.means.numpy(),
             #    'std': self.stds.numpy()
                }
-
+        print(f"Finished computing partitions, saving to {self.state_dir}/partition_info.pth")
         torch.save(out, f"{self.state_dir}/partition_info.pth")
+        print("Partitions saved")
 
     def train_base_model(self, partition_number: int):
         """
@@ -129,13 +130,14 @@ class FiniteAggregationEnsemble:
             self.compute_partitions()
         if partition_number < 0 or partition_number >= self.n_subsets:
             raise ValueError("patition_number must be in the range [0, k)")
+        print(f'Training Base model {partition_number}..')
         net = self.train_function(
             partition_number,
             Subset(self.trainset, torch.tensor(self.partitions[partition_number])),
             # self.means[partition_number],
             # self.stds[partition_number]
         )
-        print('Saving..')
+        print(f'Saving Base model {partition_number}..')
         size = list(self.trainset[0][0].size())
         while len(size) < 4:
             size.insert(0, 1)
@@ -154,6 +156,7 @@ class FiniteAggregationEnsemble:
                 'output': {0: 'batch_size'}
             }
         )
+        print(f'Base model {partition_number} saved')
         
 
     def eval(self):
