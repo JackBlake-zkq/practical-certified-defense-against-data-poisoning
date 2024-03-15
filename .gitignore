@@ -1,5 +1,6 @@
 /venv
 __pycache__/
 /data
-/FA_ensemble
-/base_models
+/datasets
+/ensembles
+TILDA_400*
