@@ -9,27 +9,6 @@ import numpy as np
 import onnx2torch
 from tqdm import tqdm
 
-# class SplitHash():
-#     def __init__(self, n_subsets:int):
-#         self.n_subsets = n_subsets
-#         self.shifts = random.sample(range(self.n_subsets), self.d)
-
-#     def __call__(self, feature: torch.Tensor) -> int:
-#         """Return the partition number for a given feature"""
-#         # split = SplitHash(k*d, ....)
-#         # split(torch.randn(5000)) -> 3
-#         pass
-
-# class SpreadHash():
-#     def __init__(self, n_subsets:int):
-#         self.n_subsets = n_subsets
-#         self.shifts = random.sample(range(self.n_subsets), self.d)
-
-#     def __call__(self, feature: torch.Tensor) -> int:
-#         """Return the unionized subset number for a given feature"""
-#         pass
-
-
 class FiniteAggregationEnsemble:
     """
     This class represents an ensemble of base models using the Finite Aggregation method. Saves info about the ensemble
@@ -60,8 +39,6 @@ class FiniteAggregationEnsemble:
         self.channels = channels
         self.num_classes = num_classes
         self.partitions = None
-        # self.means = None
-        # self.stds = None
 
         if not os.path.exists(self.state_dir):
             os.mkdir(self.state_dir)
@@ -70,8 +47,6 @@ class FiniteAggregationEnsemble:
             if os.path.exists(f"{self.state_dir}/partition_info.pth"):
                 partitions_file = torch.load(f"{self.state_dir}/partition_info.pth")
                 self.partitions = partitions_file['idx']
-                # self.means = partitions_file['mean']
-                # self.stds = partitions_file['std']
             if not os.path.exists(f'{self.state_dir}/base_models'):
                 os.mkdir(f'{self.state_dir}/base_models')
 
@@ -109,12 +84,7 @@ class FiniteAggregationEnsemble:
         idxgroup = list([idxgroup[i][np.lexsort(torch.cat((torch.tensor(labels)[idxgroup[i]].int(),for_sorting[idxgroup[i]].reshape(idxgroup[i].shape[0],-1)),dim=1).numpy().transpose())] for i in range(self.n_subsets) ])
 
         self.partitions = list([x.squeeze().numpy() for x in idxgroup])
-        # self.means = torch.stack(list([finalimgs[idxgroup[i]].permute(2,0,1,3,4).reshape(self.channels,-1).mean(dim=1) for i in range(self.n_subsets) ]))
-        # self.stds =  torch.stack(list([finalimgs[idxgroup[i]].permute(2,0,1,3,4).reshape(self.channels,-1).std(dim=1) for i in range(self.n_subsets) ]))
-        out = {'idx': self.partitions, 
-            #    'mean': self.means.numpy(),
-            #    'std': self.stds.numpy()
-               }
+        out = {'idx': self.partitions }
         print(f"Finished computing partitions, saving to {self.state_dir}/partition_info.pth")
         torch.save(out, f"{self.state_dir}/partition_info.pth")
         print("Partitions saved")
@@ -133,9 +103,7 @@ class FiniteAggregationEnsemble:
         print(f'Training Base model {partition_number}..')
         net = self.train_function(
             partition_number,
-            Subset(self.trainset, torch.tensor(self.partitions[partition_number])),
-            # self.means[partition_number],
-            # self.stds[partition_number]
+            Subset(self.trainset, torch.tensor(self.partitions[partition_number]))
         )
         print(f'Saving Base model {partition_number}..')
         size = list(self.trainset[0][0].size())
