@@ -1,12 +1,6 @@
-import argparse
-import csv
-import os
-import sys
-import uuid
-import pandas as pd
 import tensorflow as tf
-from tensorflow.keras.models import Model
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from keras.models import Model
+# sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 """
 Code Adapted From: https://github.com/ZuchniakK/MTKD/blob/main/distillation/train.py
 arXiv:2302.07215
@@ -253,196 +247,115 @@ class Distiller(Model):
         return results
 
 
-class TrainStudent(Train):
-    def __init__(
-        self,
-        teachers,
-        dataset,
-        architecture,
-        mode="mimic_all",
-        df_path=None,
-        temperature=1,
-        alpha=0,
-    ):
-        self.temperature = temperature
-        self.alpha = alpha
-        super(TrainStudent, self).__init__(dataset, architecture, df_path=df_path)
-        self.mode = mode
-        self.n_teachers = len(teachers)
-        self.fraction = float(teachers[0].split("/")[-1].split("_")[-2]) / 10
-        self.teachers_uuid = [
-            teacher.split("/")[-1].split("_")[-1] for teacher in teachers
-        ]
-        self.teachers = teachers
-        self.uuid = uuid.uuid4().hex
-        self.student = self.model
-        self.model = Distiller(
-            student=self.student,
-            teachers=[tf.keras.models.load_model(teacher) for teacher in teachers],
-            mode=self.mode,
-        )
-        # teachers = [tf.keras.models.load_model(row['model_location']) for index, row in teachers_df.iterrows()]
-        #
+ # for i in range(self.n_subsets):
+        #     if not os.path.exists(f'{self.state_dir}/base_models/model_{str(i)}.onnx'):
+        #         print(f"Base model {i} not found. Aborting...")
+        #         exit(1)
 
-    def train_model(self):
-        save_filename = f"{self.mode}_{self.architecture}_{self.fraction}_{self.n_teachers}_{self.uuid}_ckpt"
-        save_dir = os.path.join(
-            MODELS_DIRECTORY, self.dataset, "students", save_filename
-        )
+        # if not os.path.exists(f'{self.state_dir}/distillation'):
+        #     os.mkdir(f'{self.state_dir}/distillation')
 
-        callbacks = [
-            tf.keras.callbacks.EarlyStopping(
-                monitor="val_student_loss",
-                patience=self.patience,
-                mode="min",
-                restore_best_weights=True,
-            ),
-            tf.keras.callbacks.CSVLogger(
-                os.path.join(
-                    MODELS_DIRECTORY, self.dataset, "logs", f"{self.uuid}.csv"
-                ),
-                append=True,
-            ),
-            tf.keras.callbacks.ModelCheckpoint(
-                filepath=save_dir,
-                save_best_only=False,
-                save_weights_only=False,
-            ),
-        ]
+        # if not os.path.exists(f'{self.state_dir}/distillation/intermediates'):
+        #     os.mkdir(f'{self.state_dir}/distillation/intermediates')
 
-        self.model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=self.lr),
-            metrics=["accuracy"],
-            student_loss_fn=tf.keras.losses.CategoricalCrossentropy(),
-            distillation_loss_fn=tf.keras.losses.KLDivergence(),
-            alpha=self.alpha,
-            temperature=self.temperature,
-        )
-        self.model.fit(
-            x=self.train_gen,
-            epochs=self.epochs,
-            callbacks=callbacks,
-            validation_data=self.val_gen,
-            steps_per_epoch=314,
-            validation_steps=78,
-        )
+        # student.to("cpu")
+        # student_untrained_onnx_path = f'{self.state_dir}/distillation/intermediates/student_untrained.onnx'
+        # torch.onnx.export(
+        #     student, 
+        #     self.sample_input, 
+        #     student_untrained_onnx_path, 
+        #     opset_version=self.onnx_opset, 
+        #     input_names=['input'], 
+        #     output_names=['output']
+        # )
+        # student_untrained_keras_path = f'{self.state_dir}/distillation/intermediates/student_untrained.keras'
+        # onnx2tf.convert(student_untrained_onnx_path, output_folder_path=student_untrained_keras_path , output_keras_v3=True, non_verbose=True)
+        # tf_student = keras.saving.load_model(student_untrained_keras_path)
+        # print("here")
+        # teachers = []
+        # for i in range(self.n_subsets):
+        #     keras_base_model_path = f'{self.state_dir}/distillation/intermediates/model_{str(i)}.keras'
+        #     onnx2tf.convert(f'{self.state_dir}/base_models/model_{str(i)}.onnx', output_folder_path=keras_base_model_path, output_keras_v3=True, non_verbose=True)
+        #     teacher = keras.saving.load_model(keras_base_model_path)
+        #     teachers.append(teacher)
+        # model = Distiller(tf_student, teachers, mode="mimic_all")
+        # model.compile(
+        #     optimizer=keras.optimizers.Adam(learning_rate=self.lr),
+        #     metrics=["accuracy"],
+        #     student_loss_fn=keras.losses.CategoricalCrossentropy(),
+        #     distillation_loss_fn=keras.losses.KLDivergence()
+        # )
+        # callbacks = [
+        #     keras.callbacks.ModelCheckpoint(
+        #         filepath=f'{self.state_dir}/distillation/checkpoint',
+        #         save_best_only=False,
+        #         save_weights_only=False,
+        #     ),
+        # ]
+        # imgs, labels = zip(*self.trainset)
+        # model.fit(
+        #     x=imgs,
+        #     y=labels,
+        #     epochs=50,
+        #     callbacks=callbacks,
+        #     validation_data=None,
+        #     steps_per_epoch=314,
+        # )
+        # print(self.model.evaluate(x=self.testset, return_dict=True, steps=79))
+        # onnx_model, _ = from_keras(model, self.sample_input, opset=self.onnx_opset)
+        # onnx.save_model(onnx_model, f'{self.state_dir}/distillation/student.onnx')
 
-    def evaluate_and_save(self, filename="students.csv", loss_name="student_loss"):
-        test_result = self.model.evaluate(x=self.test_gen, return_dict=True, steps=79)
-        val_result = self.model.evaluate(x=self.val_gen, return_dict=True, steps=78)
-        train_result = self.model.evaluate(
-            x=self.train_gen, return_dict=True, steps=314
-        )
+    #         save_filename = f"{self.mode}_{self.architecture}_{self.fraction}_{self.n_teachers}_{self.uuid}"
+    #         save_dir = os.path.join(
+    #             MODELS_DIRECTORY, self.dataset, "students", save_filename
+    #         )
+    #         self.model.save(save_dir)
 
-        test_accuracy = test_result.get("accuracy")
-        test_loss = test_result.get(loss_name)
-        train_accuracy = train_result.get("accuracy")
-        train_loss = train_result.get(loss_name)
-        val_accuracy = val_result.get("accuracy")
-        val_loss = val_result.get(loss_name)
+    #         csv_log_filename = os.path.join(MODELS_DIRECTORY, filename)
+    #         fileEmpty = not os.path.isfile(csv_log_filename)
+    #         with open(csv_log_filename, "a") as csvfile:
+    #             headers = [
+    #                 "model_location",
+    #                 "dataset",
+    #                 "architecture",
+    #                 "n_teachers",
+    #                 "teachers_fraction",
+    #                 "mode",
+    #                 "alpha",
+    #                 "temperature",
+    #                 "teachers_uuid",
+    #                 "uuid",
+    #                 "train_loss",
+    #                 "train_accuracy",
+    #                 "val_loss",
+    #                 "val_accuracy",
+    #                 "test_loss",
+    #                 "test_accuracy",
+    #             ]
+    #             writer = csv.DictWriter(
+    #                 csvfile, delimiter=",", lineterminator="\n", fieldnames=headers
+    #             )
+    #             if fileEmpty:
+    #                 writer.writeheader()  # file doesn't exist yet, write a header
 
-        save_filename = f"{self.mode}_{self.architecture}_{self.fraction}_{self.n_teachers}_{self.uuid}"
-        save_dir = os.path.join(
-            MODELS_DIRECTORY, self.dataset, "students", save_filename
-        )
-        self.model.save(save_dir)
+    #             writer.writerow(
+    #                 {
+    #                     "model_location": save_dir,
+    #                     "dataset": self.dataset,
+    #                     "architecture": self.architecture,
+    #                     "n_teachers": self.n_teachers,
+    #                     "teachers_fraction": str(self.fraction),
+    #                     "mode": self.mode,
+    #                     "alpha": self.alpha,
+    #                     "temperature": self.temperature,
+    #                     "teachers_uuid": ":".join(self.teachers_uuid),
+    #                     "uuid": self.uuid,
+    #                     "train_loss": train_loss,
+    #                     "train_accuracy": train_accuracy,
+    #                     "val_loss": val_loss,
+    #                     "val_accuracy": val_accuracy,
+    #                     "test_loss": test_loss,
+    #                     "test_accuracy": test_accuracy,
+    #                 }
+    #             )
 
-        csv_log_filename = os.path.join(MODELS_DIRECTORY, filename)
-        fileEmpty = not os.path.isfile(csv_log_filename)
-        with open(csv_log_filename, "a") as csvfile:
-            headers = [
-                "model_location",
-                "dataset",
-                "architecture",
-                "n_teachers",
-                "teachers_fraction",
-                "mode",
-                "alpha",
-                "temperature",
-                "teachers_uuid",
-                "uuid",
-                "train_loss",
-                "train_accuracy",
-                "val_loss",
-                "val_accuracy",
-                "test_loss",
-                "test_accuracy",
-            ]
-            writer = csv.DictWriter(
-                csvfile, delimiter=",", lineterminator="\n", fieldnames=headers
-            )
-            if fileEmpty:
-                writer.writeheader()  # file doesn't exist yet, write a header
-
-            writer.writerow(
-                {
-                    "model_location": save_dir,
-                    "dataset": self.dataset,
-                    "architecture": self.architecture,
-                    "n_teachers": self.n_teachers,
-                    "teachers_fraction": str(self.fraction),
-                    "mode": self.mode,
-                    "alpha": self.alpha,
-                    "temperature": self.temperature,
-                    "teachers_uuid": ":".join(self.teachers_uuid),
-                    "uuid": self.uuid,
-                    "train_loss": train_loss,
-                    "train_accuracy": train_accuracy,
-                    "val_loss": val_loss,
-                    "val_accuracy": val_accuracy,
-                    "test_loss": test_loss,
-                    "test_accuracy": test_accuracy,
-                }
-            )
-
-
-def train_student(
-    dataset, architecture, mode, fraction=0.7, teachers_n=3, repeatitions=5, alpha=0.5
-):
-    teachers_df = pd.read_csv(os.path.join(MODELS_DIRECTORY, "teachers.csv"))
-    teachers_df = teachers_df[
-        (teachers_df.dataset == dataset)
-        & (teachers_df.architecture == architecture)
-        & (teachers_df.fraction == int(10 * fraction))
-    ]
-
-    for i in range(repeatitions):
-        teachers_df_selection = teachers_df.sample(teachers_n, replace=False)
-        teachers = [
-            row["model_location"] for index, row in teachers_df_selection.iterrows()
-        ]
-        distiller = TrainStudent(
-            teachers=teachers,
-            dataset=dataset,
-            architecture=architecture,
-            mode=mode,
-            alpha=alpha,
-        )
-        distiller.train_model()
-        distiller.evaluate_and_save()
-        tf.keras.backend.clear_session()
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("dataset", help="dataset name")
-    parser.add_argument("architecture", help="architecture name")
-    parser.add_argument(
-        "--mode",
-        help="knowledge distillation mode, allowed: 'output_avg', 'loss_avg', 'mimic_all'",
-    )
-    parser.add_argument("--fraction", default=None)
-    parser.add_argument("--teachers", default=None)
-    parser.add_argument("--repeatitions", default=None)
-    parser.add_argument("--alpha", default=None)
-    args = parser.parse_args()
-
-    train_student(
-        dataset=args.dataset,
-        architecture=args.architecture,
-        mode=args.mode,
-        fraction=float(args.fraction),
-        teachers_n=int(args.teachers),
-        repeatitions=int(args.repeatitions),
-        alpha=float(args.alpha),
-    )

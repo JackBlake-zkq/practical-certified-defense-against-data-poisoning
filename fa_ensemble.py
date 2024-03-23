@@ -5,9 +5,8 @@ from torch.utils.data import Subset, Dataset
 from interfaces import TrainModelFunction
 import os
 from torch.nn import Module
-import numpy as np
-import onnx2torch
 from tqdm import tqdm
+from torch import nn, optim
 
 class FiniteAggregationEnsemble:
     """
@@ -39,6 +38,12 @@ class FiniteAggregationEnsemble:
         self.channels = channels
         self.num_classes = num_classes
         self.partitions = None
+
+        size = list(self.trainset[0][0].size())
+        while len(size) < 4:
+            size.insert(0, 1)
+        size = tuple(size)
+        self.sample_input = torch.randn(size)
 
         if not os.path.exists(self.state_dir):
             os.mkdir(self.state_dir)
@@ -93,8 +98,11 @@ class FiniteAggregationEnsemble:
         """
         Trains the base model for the specified partition number by calling the train_function
         that the class was instantiated with. Saves the base model to {state_dir}/base_models with
-        file name model_{partition_number}.onnx
+        file name model_{partition_number}.pkl
         """
+        if os.path.exists(f'{self.state_dir}/base_models/model_{str(partition_number)}.pkl'):
+            print(f"Base model {partition_number} already exists")
+            return
         if self.partitions == None:
             print("Partitions not computed yet, computing now...")
             self.compute_partitions()
@@ -106,24 +114,7 @@ class FiniteAggregationEnsemble:
             Subset(self.trainset, torch.tensor(self.partitions[partition_number]))
         )
         print(f'Saving Base model {partition_number}..')
-        size = list(self.trainset[0][0].size())
-        while len(size) < 4:
-            size.insert(0, 1)
-        size = tuple(size)
-        sample_input = torch.randn(size)
-        net.to("cpu")
-        torch.onnx.export(
-            net, 
-            sample_input, 
-            f'{self.state_dir}/base_models/model_{str(partition_number)}.onnx', 
-            opset_version=17, 
-            input_names=['input'], 
-            output_names=['output'], 
-            dynamic_axes={
-                'input': {0: 'batch_size'}, 
-                'output': {0: 'batch_size'}
-            }
-        )
+        torch.save(net, f'{self.state_dir}/base_models/model_{str(partition_number)}.pkl')
         print(f'Base model {partition_number} saved')
         
 
@@ -132,6 +123,15 @@ class FiniteAggregationEnsemble:
         Evaluates the ensemble on the provided testset and saves results to {state_dir}/eval.pth. 
         All base models must have already been trained using train_base_model before calling this method.
         """
+        if os.path.exists(f'{self.state_dir}/eval.pth'):
+            print("Predictions already computed")
+            return
+        
+        for i in range(self.n_subsets):
+            if not os.path.exists(f'{self.state_dir}/base_models/model_{str(i)}.pkl'):
+                print(f"Base model {i} not found. Aborting...")
+                exit(1)
+
         print("Generating Predictions...")
         device = (
             "cuda"
@@ -149,7 +149,7 @@ class FiniteAggregationEnsemble:
             np.random.seed(seed)
             torch.manual_seed(seed)
             torch.cuda.manual_seed_all(seed)
-            net  = onnx2torch.convert(f'{self.state_dir}/base_models/model_{str(i)}.onnx')
+            net  = torch.load(f'{self.state_dir}/base_models/model_{str(i)}.pkl')
             net = net.to(device)
 
             testloader = torch.utils.data.DataLoader(self.testset, batch_size=2000, shuffle=False, num_workers=1)
@@ -175,6 +175,10 @@ class FiniteAggregationEnsemble:
         """
         Generates the roubstness cetificate for the ensemble, and accuracy  
         """
+
+        if os.path.exists(f'{self.state_dir}/radii.pth'):
+            print("Certificates already computed")
+            return
 
         if not os.path.exists(f'{self.state_dir}/eval.pth'):
             self.eval()
@@ -258,9 +262,81 @@ class FiniteAggregationEnsemble:
         print('Robustness certificate: ' + str(sum(accs >= .5)))
 
 
-    def distill(self, student: Module):
+    def distill(self, student: Module, seed: int=0):
         """
-        Distills the ensemble into a single model.
-        Code adapted from [Konrad Zuchniak's work on Multi-teacher distillation](https://github.com/ZuchniakK/MTKD)
+        Distills the ensemble into a single model and saves to {state_dir}/student.pkl
+        Code adapted from [Konrad Zuchniak's work on Multi-teacher distillation (with keras)](https://github.com/ZuchniakK/MTKD)
         """
-        pass
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        alpha = 0.1
+        epochs = 50
+        curr_lr = 0.1
+        epochs = 10
+        device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps"
+            if torch.backends.mps.is_available()
+            else "cpu"
+        )
+
+        trainloader = torch.utils.data.DataLoader(self.trainset, batch_size=128, shuffle=True, num_workers=1)
+        student.to(device)
+
+        student_criterion = nn.CrossEntropyLoss()
+        distillation_criterion = nn.CrossEntropyLoss()
+
+        optimizer = optim.SGD(student.parameters(), lr=curr_lr, momentum=0.9, weight_decay=0.0005, nesterov= True)
+
+        teachers = []
+        for i in range(self.n_subsets):
+            teacher = torch.load(f'{self.state_dir}/base_models/model_{str(i)}.pkl')
+            teacher.to(device)
+            teacher.eval()
+            teachers.append(teacher)
+
+        # Training
+        student.train()
+        for epoch in tqdm(range(epochs)):
+            for (inputs, targets) in tqdm(trainloader):
+                inputs, targets = inputs.to(device), targets.to(device)
+                optimizer.zero_grad()
+                teacher_votes = [{} for _ in range(len(inputs))]
+                most_voted = [(-1, -1) for i in range(len(inputs))]
+                for teacher in teachers:
+                    with torch.no_grad():
+                        for i, output in enumerate(teacher(inputs).max(1)[1]):
+                            if teacher_votes[i].get(output, None) is None:
+                                teacher_votes[i][output] = 1
+                            else: 
+                                teacher_votes[i][output] += 1
+                            if teacher_votes[i][output] > most_voted[i][1]:
+                                most_voted[i] = (output, teacher_votes[i][output])
+                ensemble_outputs = torch.tensor([t[0] for t in most_voted]).to(device)
+                student_outputs = student(inputs)
+                loss = alpha * student_criterion(student_outputs, targets) + (1-alpha) * distillation_criterion(student_outputs, ensemble_outputs)
+                loss.backward()
+                optimizer.step()
+            if (epoch in [60,120,160]):
+                curr_lr = curr_lr * 0.2
+                for param_group in optimizer.param_groups:
+                    param_group['lr'] = curr_lr
+        print(f"Finished training student, saving to {self.state_dir}/student.pkl")
+        torch.save(student, f'{self.state_dir}/student.pkl')
+        print("Evaluating Student")
+        student.eval()
+        testloader = torch.utils.data.DataLoader(self.testset, batch_size=128, shuffle=False, num_workers=1)
+        correct = 0
+        total = 0
+        for (inputs, targets) in testloader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            with torch.no_grad():
+                outputs = student(inputs)
+                _, predicted = outputs.max(1)
+                correct += predicted.eq(targets).sum().item()
+                total += targets.size(0)
+        acc = 100.*correct/total
+        print(f'Accuracy for student: {str(acc)}%')
