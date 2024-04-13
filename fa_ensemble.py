@@ -253,7 +253,7 @@ class FiniteAggregationEnsemble:
                         certs[i] = min(certs[i], radius)
             torch.save(certs, certs_path)
         elif mode == 'logit_median':
-            logits = alt.to(device).sort(dim=2)
+            logits,_ = alt.to(device).sort(dim=2)
             radii = torch.Tensor(n_sample)
             predicted_classes = torch.Tensor(n_sample)
             median_correct = 0
@@ -267,7 +267,7 @@ class FiniteAggregationEnsemble:
                     shift = self.d
                     r = 0
                     # if i==1: print(logits[i][predicted_class][mid - shift], logits[c][mid + shift])
-                    while shift < mid and logits[i][predicted_class][mid - shift] > logits[c][mid + shift]:
+                    while shift < mid and logits[i][predicted_class][mid - shift] > logits[i][c][mid + shift]:
                         shift += self.d
                         r += 1
                     if r < radii[i]: radii[i] = r
