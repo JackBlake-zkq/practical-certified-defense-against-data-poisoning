@@ -136,8 +136,10 @@ class FiniteAggregationEnsemble:
             if torch.backends.mps.is_available()
             else "cpu"
         )
-        predictions = torch.zeros(len(dataset), self.n_subsets, self.num_classes).to(device)
-        predictions_alt = torch.zeros(len(dataset), self.num_classes, self.n_subsets).to(device)
+        logits_by_base_model = torch.zeros(len(dataset), self.n_subsets, self.num_classes).to(device)
+        logits_by_class = torch.zeros(len(dataset), self.num_classes, self.n_subsets).to(device)
+        softmaxes_by_base_model = torch.zeros(len(dataset), self.n_subsets, self.num_classes).to(device)
+        softmaxes_by_class = torch.zeros(len(dataset), self.num_classes, self.n_subsets).to(device)
         labels = torch.zeros(len(dataset)).type(torch.int).to(device)
         firstit = True
         for i in tqdm(range(self.n_subsets)):
@@ -157,21 +159,30 @@ class FiniteAggregationEnsemble:
                 for (inputs, targets) in dataloader:
                     inputs, targets = inputs.to(device), targets.to(device)
                     out = net(inputs)
-                    predictions[batch_offset:inputs.size(0)+batch_offset,i,:] = out
+                    softmaxes = nn.Softmax(dim=1)(out)
+                    logits_by_base_model[batch_offset:inputs.size(0)+batch_offset,i,:] = out
+                    softmaxes_by_base_model[batch_offset:inputs.size(0)+batch_offset,i,:] = softmaxes
                     for c in range(self.num_classes):
-                        predictions_alt[batch_offset:inputs.size(0)+batch_offset, c, i] = out[:,c]
+                        logits_by_class[batch_offset:inputs.size(0)+batch_offset, c, i] = out[:,c]
+                        softmaxes_by_class[batch_offset:inputs.size(0)+batch_offset, c, i] = softmaxes[:,c]
                     if firstit:
                         labels[batch_offset:batch_offset+inputs.size(0)] = targets
                     batch_offset += inputs.size(0)
             firstit = False
 
         print(f"Saving Predictions to {path}")
-        output = {'labels': labels, 'scores': predictions, 'alt': predictions_alt}
+        output = {
+            'labels': labels, 
+            'logits_by_base_model': logits_by_base_model, 
+            'logits_by_class': logits_by_class,
+            'softmaxes_by_base_model': softmaxes_by_base_model,
+            'softmaxes_by_class': softmaxes_by_class
+            }
         torch.save(output, path)
         return output
 
 
-    def eval(self, mode='label_voting'):
+    def eval(self, mode:str):
         """
         Generates accuracy and robustness info about the ensemble
         """
@@ -189,28 +200,14 @@ class FiniteAggregationEnsemble:
 
         filein = self.get_base_model_predictions(test=True)
         labels = filein['labels']
-        scores = filein['scores']
-        alt = filein['alt']
+        logits_by_base_model = filein['logits_by_base_model']
+        logits_by_class = filein['logits_by_class']
+        softmaxes_by_base_model = filein['softmaxes_by_base_model']
+        softmaxes_by_class = filein['softmaxes_by_class']
 
         num_classes = self.num_classes
-        max_classes = scores.max(2).indices
-        predictions = torch.zeros(max_classes.shape[0],num_classes).to(device)
-        for i in range(max_classes.shape[1]):
-            predictions[(torch.arange(max_classes.shape[0]).to(device),max_classes[:,i].to(device))] += 1
-        predinctionsnp = predictions.cpu().numpy()
-        idxsort = np.argsort(-predinctionsnp,axis=1,kind='stable')
-        valsort = -np.sort(-predinctionsnp,axis=1,kind='stable')
-        val =  valsort[:,0]
-        idx = idxsort[:,0]
-        valsecond =  valsort[:,1]
-        idxsecond =  idxsort[:,1] 
         n_sample = labels.shape[0]
-
-        #original code from DPA
-        #diffs = ((val - valsecond - (idxsecond <= idx))/2).astype(int)
-        #certs = torch.tensor(diffs).cuda()
-        #torchidx = torch.tensor(idx).cuda()
-        #certs[torchidx != labels] = -1
+        max_classes = logits_by_base_model.max(2).indices
 
         certs_path = f'{self.state_dir}/{mode}_certs.pth'
 
@@ -219,6 +216,16 @@ class FiniteAggregationEnsemble:
             certs = torch.load(certs_path)
         elif mode == 'label_voting':
             print("Computing Certificates...")
+            predictions = torch.zeros(max_classes.shape[0],num_classes).to(device)
+            for i in range(max_classes.shape[1]):
+                predictions[(torch.arange(max_classes.shape[0]).to(device),max_classes[:,i].to(device))] += 1
+            predinctionsnp = predictions.cpu().numpy()
+            idxsort = np.argsort(-predinctionsnp,axis=1,kind='stable')
+            valsort = -np.sort(-predinctionsnp,axis=1,kind='stable')
+            val =  valsort[:,0]
+            idx = idxsort[:,0]
+            valsecond =  valsort[:,1]
+            idxsecond =  idxsort[:,1] 
             certs = torch.LongTensor(n_sample)
 
             #prepared for indexing
@@ -253,44 +260,56 @@ class FiniteAggregationEnsemble:
                         certs[i] = min(certs[i], radius)
             torch.save(certs, certs_path)
         elif mode == 'logit_median':
-            logits,_ = alt.to(device).sort(dim=2)
-            radii = torch.Tensor(n_sample)
-            predicted_classes = torch.Tensor(n_sample)
-            median_correct = 0
+            logits,_ = logits_by_class.to(device).sort(dim=2)
+            certs = torch.Tensor(n_sample)
             for i in tqdm(range(n_sample)):
-                radii[i] = 9999999999999999
+                certs[i] = 9999999999999999
                 mid = self.n_subsets//2
                 predicted_class = torch.argmax(logits[i,:,mid])
-                if predicted_class == labels[i]: median_correct += 1
-                for c in range(num_classes):
-                    if c == predicted_class: continue
-                    shift = self.d
-                    r = 0
-                    # if i==1: print(logits[i][predicted_class][mid - shift], logits[c][mid + shift])
-                    while shift < mid and logits[i][predicted_class][mid - shift] > logits[i][c][mid + shift]:
-                        shift += self.d
-                        r += 1
-                    if r < radii[i]: radii[i] = r
-            certs = {'radii': radii, 'correct': median_correct}
+                correct_class = labels[i]
+                if predicted_class != correct_class: certs[i] = -1
+                else:
+                    for c in range(num_classes):
+                        if c == correct_class: continue
+                        shift = self.d
+                        r = 0
+                        while shift < mid and logits[i][correct_class][mid - shift] > logits[i][c][mid + shift]:
+                            shift += self.d
+                            r += 1
+                        if r < certs[i]: certs[i] = r
+            torch.save(certs, certs_path)
+        elif mode == 'softmax_median':
+            softmaxes,_ = softmaxes_by_class.to(device).sort(dim=2)
+            certs = torch.Tensor(n_sample)
+            for i in tqdm(range(n_sample)):
+                certs[i] = 9999999999999999
+                mid = self.n_subsets//2
+                predicted_class = torch.argmax(softmaxes[i,:,mid])
+                correct_class = labels[i]
+                if predicted_class != correct_class: certs[i] = -1
+                else:
+                    for c in range(num_classes):
+                        if c == correct_class: continue
+                        shift = self.d
+                        r = 0
+                        while shift < mid and softmaxes[i][correct_class][mid - shift] > softmaxes[i][c][mid + shift]:
+                            shift += self.d
+                            r += 1
+                        if r < certs[i]: certs[i] = r
             torch.save(certs, certs_path)
         
         base_acc = 100 *  (max_classes == labels.unsqueeze(1)).sum().item() / (max_classes.shape[0] * max_classes.shape[1])
         print('Base classifier accuracy: ' + str(base_acc))
 
-        if mode == 'label_voting':
-            a = certs.cpu().sort()[0].numpy()
-            accs = np.array([(i <= a).sum() for i in np.arange(np.amax(a)+1)])/predictions.shape[0]
-            print('Label Voting - Ensembe Accuracy: ' + str(accs[0] * 100.) + '%')
-            print('Label Voting: - Certified Radius: ' + str(sum(accs >= .5)))
-        elif mode == 'logit_median':
-            print(f'Median - Ensemble Accuracy: {str(certs["correct"] / n_sample * 100)}%')
-            print(f'Median - Certified Radius: {str(certs["radii"].min().item())}')
+        a = certs.cpu().sort()[0].numpy()
+        accs = np.array([(i <= a).sum() for i in np.arange(np.amax(a)+1)])/n_sample
+        print('Ensembe Accuracy: ' + str(accs[0] * 100.) + '%')
+        print('Certified Radius (for at least half of inputs): ' + str(sum(accs >= 0.5)))
         
 
-    def distill(self, student: Module, seed: int=0, lr=0.1, epochs=1, mode='label_voting'):
+    def distill(self, student: Module, mode: str, seed: int=0, lr=0.1, epochs=1):
         """
         Distills the ensemble into a single model and saves to {state_dir}/student.pkl
-        Based on [Konrad Zuchniak's work on Multi-teacher distillation (with keras)](https://github.com/ZuchniakK/MTKD)
         """
         device = (
             "cuda"
@@ -301,26 +320,33 @@ class FiniteAggregationEnsemble:
         )
 
         preds = self.get_base_model_predictions(test=False)
-        scores = preds['scores'].to(device)
-        alt = preds['alt']
+        logits_by_base_model = preds['logits_by_base_model'].to(device)
+        logits_by_class = preds['logits_by_class']
+        softmaxes_by_base_model = preds['softmaxes_by_base_model']
+        softmaxes_by_class = preds['softmaxes_by_class']
 
-        print("Computing ensemble output on trainset...")
         if mode == 'label_voting':
             num_classes = self.num_classes
-            max_classes = scores.max(2).indices
+            max_classes = logits_by_base_model.max(2).indices
             predictions = torch.zeros(max_classes.shape[0],num_classes).to(device)
             for i in range(max_classes.shape[1]):
                 predictions[(torch.arange(max_classes.shape[0]).to(device),max_classes[:,i].to(device))] += 1
             ensemble_outputs = torch.argmax(predictions, dim=1)
         elif mode == 'logit_median':
             mid = self.n_subsets//2
-            logits, _ = alt.to(device).sort(dim=2)
+            logits, _ = logits_by_class.to(device).sort(dim=2)
             ensemble_outputs = logits[:,:,mid]
+        elif mode == 'softmax_median':
+            mid = self.n_subsets//2
+            softmaxes, _ = softmaxes_by_class.to(device).sort(dim=2)
+            ensemble_outputs = softmaxes[:,:,mid]
+        else:
+            raise ValueError("Invalid distillation mode")
 
-        
-        if os.path.exists(f'{self.state_dir}/student.pkl'):
-            print("Student already trained")
-            student = torch.load(f'{self.state_dir}/student.pkl')
+        student_path = f'{self.state_dir}/student_{mode}.pkl'
+        if os.path.exists(student_path):
+            print(f"Student for {mode} distillation mode already trained")
+            student = torch.load(student_path)
         else:
             random.seed(seed)
             np.random.seed(seed)
@@ -330,7 +356,7 @@ class FiniteAggregationEnsemble:
             trainloader = torch.utils.data.DataLoader(self.trainset, batch_size=128, shuffle=False, num_workers=1)
             student.to(device)
 
-            criterion = nn.CrossEntropyLoss() if mode == 'label_voting' else torch.nn.MSELoss()
+            criterion = torch.nn.MSELoss() if mode == 'logit_median' else nn.CrossEntropyLoss()
 
             optimizer = optim.SGD(student.parameters(), lr=lr, momentum=0.9, weight_decay=5e-4, nesterov=True)
 
@@ -348,9 +374,10 @@ class FiniteAggregationEnsemble:
                     loss.backward()
                     optimizer.step()
                     batch_offset += inputs.size(0)
-            print(f"Finished training student, saving to {self.state_dir}/student.pkl")
-            torch.save(student, f'{self.state_dir}/student.pkl')
+            print(f"Finished training student, saving to { student_path}")
+            torch.save(student, student_path)
         print("Evaluating Student")
+        student.to(device)
         student.eval()
         testloader = torch.utils.data.DataLoader(self.testset, batch_size=128, shuffle=False, num_workers=1)
         correct = 0
