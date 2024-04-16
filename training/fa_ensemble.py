@@ -23,7 +23,7 @@ class FiniteAggregationEnsemble:
         organization={PMLR}
     }
     """
-    def __init__(self, trainset: Dataset, testset: Dataset, train_function: TrainModelFunction, num_classes: int, state_dir:str, channels:int=3, k:int=50, d:int=1):
+    def __init__(self, trainset: Dataset, testset: Dataset, train_function: TrainModelFunction, num_classes: int, state_dir:str, k:int=50, d:int=1):
         self.k = k
         self.d = d
         self.n_subsets = self.k * self.d
@@ -32,15 +32,8 @@ class FiniteAggregationEnsemble:
         self.trainset = trainset
         self.testset = testset
         self.state_dir = "ensembles/" + state_dir
-        self.channels = channels
         self.num_classes = num_classes
         self.partitions = None
-
-        size = list(self.trainset[0][0].size())
-        while len(size) < 4:
-            size.insert(0, 1)
-        size = tuple(size)
-        self.sample_input = torch.randn(size)
 
         if not os.path.exists(self.state_dir):
             os.mkdir(self.state_dir)

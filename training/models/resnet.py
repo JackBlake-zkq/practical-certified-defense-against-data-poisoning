@@ -106,6 +106,9 @@ class ResNet(nn.Module):
         out = self.linear(out)
         return out
 
+def ResNetSmall():
+    return ResNet(BasicBlock, [1, 1, 1, 1])
+
 def ResNetSmall_1C():
     return ResNet(BasicBlock, [1, 1, 1, 1], channels=1)
 
