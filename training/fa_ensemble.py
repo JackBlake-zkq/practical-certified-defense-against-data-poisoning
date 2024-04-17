@@ -314,9 +314,9 @@ class FiniteAggregationEnsemble:
 
         preds = self.get_base_model_predictions(test=False)
         logits_by_base_model = preds['logits_by_base_model'].to(device)
-        logits_by_class = preds['logits_by_class']
-        softmaxes_by_base_model = preds['softmaxes_by_base_model']
-        softmaxes_by_class = preds['softmaxes_by_class']
+        logits_by_class = preds['logits_by_class'].to(device)
+        softmaxes_by_base_model = preds['softmaxes_by_base_model'].to(device)
+        softmaxes_by_class = preds['softmaxes_by_class'].to(device)
 
         if mode == 'label_voting':
             num_classes = self.num_classes
@@ -358,15 +358,20 @@ class FiniteAggregationEnsemble:
             for epoch in range(epochs):
                 print(f"Epoch {epoch+1}/{epochs}")
                 batch_offset = 0
+                correct = 0
+                total = 0
                 for (inputs, targets) in tqdm(trainloader):
                     inputs, targets = inputs.to(device), targets.to(device)
                     optimizer.zero_grad()
                     teachers_outputs = ensemble_outputs[batch_offset:batch_offset + inputs.size(0)]
                     student_outputs = student(inputs)
+                    correct += torch.argmax(student_outputs, dim=1).eq(targets).sum().item()
+                    total += inputs.shape[0]
                     loss = criterion(student_outputs, teachers_outputs)
                     loss.backward()
                     optimizer.step()
                     batch_offset += inputs.size(0)
+                print(f"Trainset Accuracy: {str(correct/total*100)}%")
             print(f"Finished training student, saving to { student_path}")
             torch.save(student, student_path)
         print("Evaluating Student")
