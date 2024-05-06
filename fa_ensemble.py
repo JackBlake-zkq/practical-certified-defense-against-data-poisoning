@@ -117,9 +117,54 @@ class FiniteAggregationEnsemble:
         print(f'Saving Base model {partition_number} to {path}..')
         torch.save(net, path)
         print(f'Base model {partition_number} saved')
+
+    def get_single_base_model_predictions(self, partition_number, test: bool) -> dict:
+        ds_str = ('test' if test else 'train') + "set"
+        dataset = self.testset if test else self.trainset
+
+        path = f'{self.state_dir}/predictions/model_{partition_number}_{ds_str}_predictions.pth'
+
+        if os.path.exists(path):
+            return torch.load(path, map_location=torch.device('cpu'))
+        
+        device = (
+            "cuda"
+            if torch.cuda.is_available()
+            else "mps"
+            if torch.backends.mps.is_available()
+            else "cpu"
+        )
+
+        os.makedirs(f'{self.state_dir}/predictions', exist_ok=True)
+
+        path = f'{self.state_dir}/predictions/model_{partition_number}_{ds_str}_predictions.pth'
+        
+        seed = partition_number
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        net  = torch.load(f'{self.state_dir}/base_models/model_{str(partition_number)}.pkl', map_location=torch.device('cpu'))
+        net = net.to(device)
+
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=2000, shuffle=False, num_workers=1)
+
+        logits = torch.zeros(len(dataset), self.num_classes).to(device)
+
+        net.eval()
+        batch_offset = 0
+        with torch.no_grad():
+            for (inputs, targets) in dataloader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                out = net(inputs)
+                next_batch_offset = batch_offset + inputs.size(0)
+                logits[batch_offset:next_batch_offset,:] = out
+                batch_offset = next_batch_offset
+        torch.save(logits, path)
+        return logits
         
 
-    def get_base_model_predictions(self, test=True):
+    def get_all_predictions(self, test=True ) -> dict:
         """
         Runs each base model on the provided testset and saves results to `{state_dir}/{train/test}_predictions.pth`.
         It is not necessary to directly call this method, as it is called by `eval` if predictions have not been computed yet.
@@ -133,6 +178,7 @@ class FiniteAggregationEnsemble:
             return torch.load(path, map_location=torch.device('cpu'))
 
         print(f"Generating base model predictions on {ds_str}...")
+        
         device = (
             "cuda"
             if torch.cuda.is_available()
@@ -144,49 +190,35 @@ class FiniteAggregationEnsemble:
         logits_by_class = torch.zeros(len(dataset), self.num_classes, self.n_subsets).to(device)
         softmaxes_by_base_model = torch.zeros(len(dataset), self.n_subsets, self.num_classes).to(device)
         softmaxes_by_class = torch.zeros(len(dataset), self.num_classes, self.n_subsets).to(device)
-        labels = torch.zeros(len(dataset)).type(torch.int).to(device)
-        firstit = True
+        labels = torch.tensor(len(dataset)).to(device)
+        print(logits_by_base_model.shape)
         for i in tqdm(range(self.n_subsets)):
-            seed = i
-            random.seed(seed)
-            np.random.seed(seed)
-            torch.manual_seed(seed)
-            torch.cuda.manual_seed_all(seed)
-            net  = torch.load(f'{self.state_dir}/base_models/model_{str(i)}.pkl', map_location=torch.device('cpu'))
-            net = net.to(device)
-
-            dataloader = torch.utils.data.DataLoader(dataset, batch_size=2000, shuffle=False, num_workers=1)
-            
-            net.eval()
-            batch_offset = 0
-            with torch.no_grad():
-                for (inputs, targets) in dataloader:
-                    inputs, targets = inputs.to(device), targets.to(device)
-                    out = net(inputs)
-                    softmaxes = nn.Softmax(dim=1)(out)
-                    logits_by_base_model[batch_offset:inputs.size(0)+batch_offset,i,:] = out
-                    softmaxes_by_base_model[batch_offset:inputs.size(0)+batch_offset,i,:] = softmaxes
-                    for c in range(self.num_classes):
-                        logits_by_class[batch_offset:inputs.size(0)+batch_offset, c, i] = out[:,c]
-                        softmaxes_by_class[batch_offset:inputs.size(0)+batch_offset, c, i] = softmaxes[:,c]
-                    if firstit:
-                        labels[batch_offset:batch_offset+inputs.size(0)] = targets
-                    batch_offset += inputs.size(0)
-            firstit = False
+            logits = self.get_single_base_model_predictions(i, test)
+            softmaxes = nn.Softmax(dim=1)(logits)
+            logits_by_base_model[:,i,:] = logits
+            softmaxes_by_base_model[:,i,:] = softmaxes
+            for c in range(self.num_classes):
+                logits_by_class[:,c,i] = logits[:,c]
+                softmaxes_by_class[:,c,i] = softmaxes[:,c]
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=2000, shuffle=False, num_workers=1)
+        batch_offset = 0
+        with torch.no_grad():
+            for (inputs, targets) in dataloader:
+                labels[batch_offset:inputs.size(0)+batch_offset] = targets
+                batch_offset += inputs.size(0)
 
         print(f"Saving Predictions to {path}")
         output = {
-            'labels': labels, 
             'logits_by_base_model': logits_by_base_model, 
             'logits_by_class': logits_by_class,
             'softmaxes_by_base_model': softmaxes_by_base_model,
-            'softmaxes_by_class': softmaxes_by_class
-            }
+            'softmaxes_by_class': softmaxes_by_class,
+            'labels': labels
+        }
         torch.save(output, path)
         return output
 
-
-    def eval(self, mode:str):
+    def eval(self, mode:str) -> None:
         """
         Generates accuracy and robustness info about the ensemble using the specified mode.
         `mode` can be `label_voting`, `logit_median`, or `softmax_median`.
@@ -211,7 +243,7 @@ class FiniteAggregationEnsemble:
         random.seed(999999999+208)
         shifts = random.sample(range(self.n_subsets), self.d)
 
-        filein = self.get_base_model_predictions(test=True)
+        filein = self.get_all_predictions(test=True)
         labels = filein['labels']
         logits_by_base_model = filein['logits_by_base_model']
         logits_by_class = filein['logits_by_class']
@@ -498,7 +530,7 @@ class FiniteAggregationEnsemble:
             print(f"Student already trained with those parameters at {student_path}, loading it in instead of training again...")
             student = torch.load(student_path, map_location=torch.device('cpu'))
         else:
-            preds = self.get_base_model_predictions(test=False)
+            preds = self.get_all_predictions(test=False)
             logits_by_base_model = preds['logits_by_base_model'].to(device)
             logits_by_class = preds['logits_by_class'].to(device)
             softmaxes_by_base_model = preds['softmaxes_by_base_model'].to(device)
