@@ -190,8 +190,7 @@ class FiniteAggregationEnsemble:
         logits_by_class = torch.zeros(len(dataset), self.num_classes, self.n_subsets).to(device)
         softmaxes_by_base_model = torch.zeros(len(dataset), self.n_subsets, self.num_classes).to(device)
         softmaxes_by_class = torch.zeros(len(dataset), self.num_classes, self.n_subsets).to(device)
-        labels = torch.tensor(len(dataset)).to(device)
-        print(logits_by_base_model.shape)
+        labels = torch.zeros(len(dataset)).to(device)
         for i in tqdm(range(self.n_subsets)):
             logits = self.get_single_base_model_predictions(i, test)
             softmaxes = nn.Softmax(dim=1)(logits)
@@ -561,7 +560,7 @@ class FiniteAggregationEnsemble:
                 num_of_models = logits_by_base_model.shape[1]
 
                 dec_classes = torch.argsort(scores, dim=2, descending=True)
-                ensemble_outputs = torch.zeros((num_of_samples, ), dtype=torch.int).to(device)
+                ensemble_outputs = torch.zeros((num_of_samples, ), dtype=torch.long).to(device)
                 predictions = torch.zeros(num_of_samples, num_of_classes).to(device) # number of first-round votes for each class
                 for i in range(num_of_models):
                     predictions[(torch.arange(num_of_samples),dec_classes[:,i, 0])] += 1
