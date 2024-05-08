@@ -20,18 +20,9 @@ class FiniteAggregationEnsemble:
 
     Introduces two novel aggregation methods:
 
-    1. Median of Logits - To generate the prediction for a sample: for each class, takes the median logit value across all base models i.e. for 3 base models with logits [1, 2, 3], [2, 3, 4], [3, 4, 5], the median logit for class 0 would be 2, for class 1 would be 3, and for class 2 would be 4, so the ensemble outputs [2, 3, 4] as its logits.
+    1. Median of Logits - To generate the prediction for a sample: for each class, takes the median logit value across all base models e.g. for 3 base models with logits [1, 2, 3], [2, 3, 4], [3, 4, 5], the median logit for class 0 would be 2, for class 1 would be 3, and for class 2 would be 4, so the ensemble outputs [2, 3, 4] as its logits.
     2. Median of Softmaxes - Same thing, but take the softmax before taking the median. Notably, the output is not a softmax,
     so we should take the softmax of the output to get the final softmax prediction.
-
-    Compared to the Finite Aggregation voting strategy:
-
-    1. Median of Logits tends to get better accuracy when distilled, since we can use logit layer information as our
-    training targets, but slightly worse robustness in our testing.
-    
-    2. Median of Softmaxes tends to get better robustness in our experiments. It is unknown why this is the case. However,
-    in our testing, it got the worst accuracy of the three methods, tending to overfit the training data. We're interested
-    in any way this can be fixed, as this method seems quite promising for robustness.
     """
     def __init__(self, state_dir:str, trainset: Dataset, testset: Dataset, num_classes: int, k:int, d:int=1):
         self.k = k
@@ -500,7 +491,20 @@ class FiniteAggregationEnsemble:
         accs = np.array([(i <= a).sum() for i in np.arange(np.amax(a)+1)])/n_sample
         print('Clean Accuracy: ' + str(accs[0] * 100.) + '%')
         print('Median Certified Radius: ' + str(sum(accs >= 0.5)))
-        
+
+    def certified_accuracy(self, mode:str, attack_size:int) -> float:
+        """
+        Returns the certified accuracy of the ensemble using the specified mode and attack size.
+        """
+        certs_path = f'{self.state_dir}/{mode}_certs.pth'
+        if not os.path.exists(certs_path):
+            raise Exception("Certificates not computed yet, please call eval first")
+        certs = torch.load(certs_path, map_location=torch.device('cpu'))
+        a = certs.cpu().sort()[0].numpy()
+        accs = np.array([(i <= a).sum() for i in np.arange(np.amax(a)+1)])/len(certs)
+        if attack_size > len(accs):
+            return 0
+        return accs[attack_size]
 
     def distill(self, student: Module, mode: str, lr: float, seed: int=0, epochs:int=10) -> Module:
         """
