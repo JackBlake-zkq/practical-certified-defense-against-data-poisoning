@@ -100,7 +100,7 @@ class FiniteAggregationEnsemble:
             raise ValueError("patition_number must be in the range [0, k*d)")
         
         partitions = self.get_partitions()
-        print(f'Training Base model {partition_number}..')
+        print(f'Training Base model {partition_number + 1}.. of {self.n_subsets}')
         net = train_function(
             partition_number,
             Subset(self.trainset, torch.tensor(partitions[partition_number]))
