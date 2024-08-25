@@ -43,7 +43,7 @@ To generate the prediction for a sample: for each class, takes the median logit 
 
 Same thing, but take the softmax before taking the median. Notably, the output is not a softmax, so we should take the softmax of the output to get the final softmax prediction.
 
-### "Proof" of Certified Defense
+### Proof of Certified Defense
 
 From a single poison training sample, at most d partitions will be affected, thus d base models. We'll assume pessimistically that the adversary gains full control over the output of each of these d base models. 
 
@@ -55,6 +55,4 @@ The certified radius for an input is the amount of times we can iterate this pro
 
 See `benchmark.py` for results on MNIST with k=1200, d=1, same training as previous work.
 
-Logit Median gets poor certified accuracies, and poor accuracy under distillation.
-
-Softmax Median establishes a new state of the art, so long as the proof is correct. It achieves higher certified accuracies for all attack sizes, and has good accuracy under distillation.
+While Logit Median gets poor certified accuracies, and poor accuracy under distillation, **Softmax Median establishes a new state of the art**. It achieves higher certified accuracies for all attack sizes, and has good accuracy under distillation.
