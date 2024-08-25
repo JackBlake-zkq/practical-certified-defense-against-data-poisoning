@@ -4,7 +4,7 @@ Existing work on certified defenses against data poisoning yields systems that a
 
 Existing work is also inconvinient to adapt to a different dataset (especially), architecture, or training method.
 
-We aim to integrated current defenses with knowledge distillation, and develop new aggregation methods that are better suited for distillation.
+We aim to integrate current defenses with knowledge distillation, and develop new aggregation methods that are better suited for distillation.
 
 ## Prior Work
 
@@ -26,7 +26,7 @@ This repo provides a system to:
 
 - Automatically partition dataset
 - Train base models of any architecture, with any dataset (samples need to be tensors e.g. via a ToTensor transformation)
-- Evaluate Enseble Accuracy and Robustness (with multiple aggregation techniques)
+- Evaluate Ensemble Accuracy and Robustness (with multiple aggregation techniques)
 - Distill into a single model by training on ensemble outputs (with any/each of the aggregation techniques)
 
 ## Solution
@@ -35,11 +35,9 @@ The class provided in `fa_ensemble.py` provides the tools necessary to train, ev
 
 We also introduce 2 novel aggregation methods, which we call Logit Median Aggregation, and Softmax Median Aggregation.
 
-### Logit Aggregation
+### Logit Median
 
 To generate the prediction for a sample: for each class, takes the median logit value across all base models e.g. for 3 base models with logits [1, 2, 3], [2, 3, 4], [3, 4, 5], the median logit for class 0 would be 2, for class 1 would be 3, and for class 2 would be 4, so the ensemble outputs [2, 3, 4] as its logits.
-
-This 
 
 ### Softmax Median
 
